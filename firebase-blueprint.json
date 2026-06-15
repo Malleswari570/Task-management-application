@@ -1,0 +1,97 @@
+{
+  "entities": {
+    "board": {
+      "title": "Board",
+      "description": "A container for tasks, representing a project or category.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The name of the board."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description of the board's purpose."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this board."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the board was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last update to the board."
+        }
+      },
+      "required": ["title", "ownerId", "createdAt", "updatedAt"]
+    },
+    "task": {
+      "title": "Task",
+      "description": "A specific action item belonging to a board.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The title of the task."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the task."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["todo", "in_progress", "completed"],
+          "description": "The current state of the task."
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Task severity level."
+        },
+        "dueDate": {
+          "type": "string",
+          "format": "date",
+          "description": "Optional deadline for the task."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The user UID who created the task."
+        },
+        "boardId": {
+          "type": "string",
+          "description": "The board container ID."
+        },
+        "tags": {
+          "type": "array",
+          "description": "A bounded set of tags for categorization."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the task was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last update to the task."
+        }
+      },
+      "required": ["title", "status", "priority", "ownerId", "boardId", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/boards/{boardId}": {
+      "schema": "board",
+      "description": "Stores organizational boards created by authenticated users."
+    },
+    "/boards/{boardId}/tasks/{taskId}": {
+      "schema": "task",
+      "description": "Stores individual tasks housed inside a specific board container."
+    }
+  }
+}

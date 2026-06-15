@@ -1,0 +1,6 @@
+{
+  "name": "Task Manager",
+  "description": "A robust full-stack responsive task management application for creating, updating, and tracking tasks with Firestore real-time synchronization and secure user authentication.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

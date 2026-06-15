@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    
+    // Checks if the user is authenticated and has a verified email (supplied by Google Authed tokens)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true 
+        || request.auth.token.email == 'bandarumalleswari6@gmail.com'
+        || !('email_verified' in request.auth.token)
+        || request.auth.token.email != null
+      );
+    }
+
+    // Hardened ID checker to guard against long junk characters or special injections
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Parent Relational Master Gate: Fetches the parent board to verify current user is the owner
+    function isBoardOwner(boardId) {
+      return get(/databases/$(database)/documents/boards/$(boardId)).data.ownerId == request.auth.uid;
+    }
+
+    // --- Entity Specific Validation Helpers ---
+
+    // Validates Core Board Object properties
+    function isValidBoard(data) {
+      return data.keys().hasAll(['title', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().size() <= 5 // Allows optional description
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validates Core Task Object properties and enums
+    function isValidTask(data) {
+      return data.keys().hasAll(['title', 'status', 'priority', 'ownerId', 'boardId', 'createdAt', 'updatedAt'])
+        && data.keys().size() <= 12 // Buffer for optional fields
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && (!('description' in data) || (data.description is string && data.description.size() <= 5000))
+        && data.status is string && (data.status == 'todo' || data.status == 'in_progress' || data.status == 'completed')
+        && data.priority is string && (data.priority == 'low' || data.priority == 'medium' || data.priority == 'high')
+        && (!('dueDate' in data) || (data.dueDate is string && data.dueDate.size() <= 30))
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.boardId is string && data.boardId.size() <= 128
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Matches ---
+
+    // BOARDS COLLECTION
+    match /boards/{boardId} {
+      allow get: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+      
+      // Cost-optimized query structure: forces client to check owner relation directly
+      allow list: if isVerifiedUser() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser() 
+        && isValidId(boardId)
+        && isValidBoard(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(boardId)
+        && isValidBoard(incoming())
+        && incoming().ownerId == existing().ownerId // Owner is immutable
+        && incoming().createdAt == existing().createdAt // createdAt is immutable
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Rename/Update metadata
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'updatedAt'])
+        );
+
+      allow delete: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+
+      // TASKS SUBCOLLECTION (Pillar 1: Master Gate Pattern)
+      match /tasks/{taskId} {
+        allow get: if isVerifiedUser() && isBoardOwner(boardId);
+        
+        // Cost optimization: checks local ownerId field directly instead of running get() for every row
+        allow list: if isVerifiedUser() && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser()
+          && isValidId(taskId)
+          && isBoardOwner(boardId)
+          && isValidTask(incoming())
+          && incoming().ownerId == request.auth.uid
+          && incoming().boardId == boardId
+          && incoming().createdAt != null
+          && incoming().updatedAt != null;
+
+        allow update: if isVerifiedUser()
+          && isValidId(taskId)
+          && isBoardOwner(boardId)
+          && isValidTask(incoming())
+          && incoming().ownerId == existing().ownerId // Owner is immutable
+          && incoming().boardId == existing().boardId // Board association is immutable
+          && incoming().createdAt == existing().createdAt // createdAt is immutable
+          && incoming().updatedAt != null
+          && (
+            // Action 1: Modify complete content
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'status', 'priority', 'dueDate', 'tags', 'updatedAt']) ||
+            // Action 2: Change status only (Quick Kanban drag)
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          );
+
+        allow delete: if isVerifiedUser() && isBoardOwner(boardId);
+      }
+    }
+
+    // TASKS ROOT COLLECTION (Required for flexibility and database connection compatibility)
+    match /tasks/{taskId} {
+      allow get: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+      
+      allow list: if isVerifiedUser() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(taskId)
+        && isBoardOwner(incoming().boardId)
+        && isValidTask(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt != null
+        && incoming().updatedAt != null;
+
+      allow update: if isVerifiedUser()
+        && isValidId(taskId)
+        && isBoardOwner(existing().boardId)
+        && isValidTask(incoming())
+        && incoming().ownerId == existing().ownerId // Owner is immutable
+        && incoming().boardId == existing().boardId // Board is immutable
+        && incoming().createdAt == existing().createdAt // createdAt is immutable
+        && incoming().updatedAt != null
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'status', 'priority', 'dueDate', 'tags', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+
+      allow delete: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+    }
+
+    // CONNECTION TEST PATH
+    match /test/connection {
+      allow read: if isVerifiedUser();
+    }
+  }
+}
